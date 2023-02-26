@@ -3,10 +3,12 @@ pragma solidity 0.8.17;
 pragma abicoder v2;
 //deployed first instance at: 0xf2b1009b4fe3a61e1a7abe49e08fbf9b9de9bc8c
 
-import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
-import "@openzeppelin/contracts/token/ERC721/extensions/ERC721URIStorage.sol";
-import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
-import "@openzeppelin/contracts/utils/cryptography/draft-EIP712.sol";
+import "lib/openzeppelin-contracts/contracts/token/ERC721/ERC721.sol";
+import "lib/openzeppelin-contracts/contracts/token/ERC721/extensions/ERC721URIStorage.sol";
+import "lib/openzeppelin-contracts/contracts/utils/cryptography/ECDSA.sol";
+// import "@openzeppelin/contracts/utils/cryptography/draft-EIP712.sol";
+import "lib/openzeppelin-contracts/contracts/utils/cryptography/draft-EIP712.sol";
+
 import "./IWETH.sol";
 
 //tasks:
@@ -31,13 +33,24 @@ contract KyvuNFT is ERC721URIStorage, EIP712 {
     bool public activeFee;
     uint256 effectiveAmount = 98;
     address public owner;
+    error invalidFee();
+    error sentValueTooLow();
+    error alreadyExists();
+    error tooLittleTime();
+    error lessWethAllowance();
+    error expiredOffer();
+    error wrongRecipient();
+    error notTheOwner();
     modifier onlyOwner() {
         require(msg.sender == owner, "Only owner");
         _;
     }
 
     function changeActiveAmount(uint256 x) external onlyOwner {
-        require(x <= 100 && x >= 90, "can't go out of this range");
+        if (x > 100 || x < 90) {
+            revert invalidFee();
+        }
+        // require(, "can't go out of this range");
         effectiveAmount = x;
     }
 
@@ -93,18 +106,23 @@ contract KyvuNFT is ERC721URIStorage, EIP712 {
         string uri;
         bytes signature;
     }
-
-    function redeem(NFTVoucher calldata voucher) public payable {
+//made redeem, makeOffer, and acceptOffer functions external.
+    function redeem(NFTVoucher calldata voucher) external payable { 
         address signer = _verify(voucher);
-        require(
-            uriToTokenID[voucher.uri] == 0,
-            "This URI already exists on chain"
-        );
-
-        require(
-            msg.value >= voucher.minPrice,
-            "Value sent is lower than min. price"
-        );
+        // require(
+        //     uriToTokenID[voucher.uri] == 0,
+        //     "This URI already exists on chain"
+        // );
+        if (uriToTokenID[voucher.uri] != 0) {
+            revert alreadyExists();
+        }
+        if (msg.value < voucher.minPrice) {
+            revert sentValueTooLow();
+        }
+        // require(
+        //     msg.value >= voucher.minPrice,
+        //     "Value sent is lower than min. price"
+        // );
         currentTokenId++;
         _mint(msg.sender, currentTokenId);
         _setTokenURI(currentTokenId, voucher.uri);
@@ -132,17 +150,29 @@ contract KyvuNFT is ERC721URIStorage, EIP712 {
         string memory _tokenURI,
         uint96 _endTime,
         uint256 _approvedAmount
-    ) public {
-        require(_approvedAmount > 0, "Can't offer zero ether");
-        require(
-            IERC20(weth).allowance(msg.sender, address(this)) >=
-                _approvedAmount,
-            "You haven't approved enough weth"
-        );
-        require(
-            _endTime > block.timestamp + 30,
-            "Should give enough time for the offer to make sense"
-        );
+    ) external {
+        if (_approvedAmount == 0) {
+            revert sentValueTooLow(); //if we want to keep these changes, and keep on working with reverts like these, I'll be more explicit.
+        }
+        // require(_approvedAmount > 0, "Can't offer zero ether");
+        if (
+            IERC20(weth).allowance(msg.sender, address(this)) < _approvedAmount
+        ) {
+            revert lessWethAllowance();
+        }
+        // require(
+        //     IERC20(weth).allowance(msg.sender, address(this)) >=
+        //         _approvedAmount,
+        //     "You haven't approved enough weth"
+        // );
+        //recheck with reviewer, because time is in seconds not milliseconds.
+        if (_endTime < block.timestamp + 300) {
+            revert tooLittleTime();
+        }
+        // require(
+        //     _endTime > block.timestamp + 30,
+        //     "Should give enough time for the offer to make sense"
+        // );
         offers memory offer1 = offers({
             recipient: offeredTo,
             tokenURI: _tokenURI,
@@ -159,19 +189,31 @@ contract KyvuNFT is ERC721URIStorage, EIP712 {
         offerCounter++;
     }
 
-    function acceptOffer(string memory _tokenURI, uint256 _offerID) public {
+    function acceptOffer(string memory _tokenURI, uint256 _offerID) external {
         address recipientOfWETH = offerIDToOffers[_offerID].recipient;
-        require(
-            recipientOfWETH == msg.sender,
-            "Only recipient can accept this offer."
-        );
-        require(
-            block.timestamp < offerIDToOffers[_offerID].endTime,
-            "Offer has expired"
-        );
+        if(recipientOfWETH!=msg.sender){
+            revert wrongRecipient();
+        }
+        // require(
+        //     recipientOfWETH == msg.sender,
+        //     "Only recipient can accept this offer."
+        // );
+        if(block.timestamp > offerIDToOffers[_offerID].endTime){
+            revert expiredOffer();
+        }
+        // require(
+        //     block.timestamp < offerIDToOffers[_offerID].endTime,
+        //     "Offer has expired"
+        // );
         address receiverOfNFT = offerIDToOffers[_offerID].offerer;
         if (uriToTokenID[_tokenURI] != 0) {
-                    require(ownerOf(uriToTokenID[_tokenURI])==msg.sender, "You don't own the NFT, so you can't accept this offer anymore");
+            if(ownerOf(uriToTokenID[_tokenURI]) != msg.sender){
+                revert notTheOwner();
+            }
+            // require(
+            //     ownerOf(uriToTokenID[_tokenURI]) == msg.sender,
+            //     "You don't own the NFT, so you can't accept this offer anymore"
+            // );
             _transfer(msg.sender, receiverOfNFT, uriToTokenID[_tokenURI]);
         } else {
             currentTokenId++;
