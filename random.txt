@@ -2,3 +2,5 @@ random text
 
 Link for actual ERC20 tut:
 https://medium.com/aztec-protocol/from-zero-to-nowhere-smart-contract-programming-in-huff-1-2-ba2b6de7fa83
+
+The foundry_fuzz_runs is broken, 
